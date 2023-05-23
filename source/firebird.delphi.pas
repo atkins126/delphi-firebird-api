@@ -4,7 +4,7 @@ interface
 
 uses
   System.SysUtils, Data.SqlTimSt,
-  firebird.dsc.h, firebird.types_pub.h;
+  firebird.dsc.h, firebird.dsc_pub.h, firebird.types_pub.h;
 
 type
   TTimeZoneOffset = record
@@ -16,7 +16,6 @@ type
 
   TGetTimeZoneOffSet = TFunc<Word, TTimeZoneOffset>;
   TAddTimeZone = reference to procedure (const aID: Word; const aTimeZoneOffset: TTimeZoneOffset);
-  TSetupTimeZoneHandler = TProc<TAddTimeZone>;
 
   ISC_DATE_Helper = record helper for ISC_DATE
   private
@@ -24,10 +23,8 @@ type
         inline;
     class function encode_date(year, month, day: Word): ISC_DATE; static; inline;
   public
-    class operator Implicit(Value: Integer): ISC_DATE;
-    class operator Implicit(Value: ISC_DATE): Integer;
-    class operator Implicit(Value: ISC_DATE): TTimeStamp;
-    class operator Implicit(Value: TTimeStamp): ISC_DATE;
+    class function Create(Value: TTimeStamp): ISC_DATE; static; inline;
+    function ToTimeStamp: TTimeStamp;
   end;
 
   ISC_TIME_Helper = record helper for ISC_TIME
@@ -37,10 +34,8 @@ type
     class function encode_time(hours, minutes, seconds, msec: Word): ISC_TIME;
         static;
   public
-    class operator Implicit(Value: Integer): ISC_TIME;
-    class operator Implicit(Value: ISC_TIME): Integer;
-    class operator Implicit(Value: ISC_TIME): TTimeStamp;
-    class operator Implicit(Value: TTimeStamp): ISC_TIME;
+    class function Create(Value: TTimeStamp): ISC_TIME; static; inline;
+    function ToTimeStamp: TTimeStamp;
   end;
 
   ISC_TIMESTAMP_Helper = record helper for ISC_TIMESTAMP
@@ -63,7 +58,9 @@ type
   strict private
     GetTimeZoneOffset: TGetTimeZoneOffSet;
     FValue: ISC_TIMESTAMP_TZ;
+    class function DefaultTimeZoneOffset(aFBTimeZoneID: Word): TTimeZoneOffset; static;
   public
+    class operator Initialize(out Dest: ISC_TIMESTAMP_TZ_IANA);
     class operator Implicit(Value: ISC_TIMESTAMP_TZ_IANA): TSQLTimeStampOffset;
     class operator Implicit(Value: ISC_TIMESTAMP_TZ): ISC_TIMESTAMP_TZ_IANA;
     procedure Setup(aGetTimeZoneOffset: TGetTimeZoneOffSet);
@@ -73,6 +70,13 @@ implementation
 
 uses
   System.DateUtils, System.TimeSpan;
+
+class function ISC_DATE_Helper.Create(Value: TTimeStamp): ISC_DATE;
+begin
+  var y, m, d: Word;
+  DecodeDate(TimeStampToDateTime(Value), y, m, d);
+  Result := encode_date(y, m, d);
+end;
 
 class procedure ISC_DATE_Helper.decode_date(nday: Integer; out year, month,
     day: Word);
@@ -127,28 +131,11 @@ begin
             (153 * month + 2) div 5 + day + 1721119 - 2400001;
 end;
 
-class operator ISC_DATE_Helper.Implicit(Value: Integer): ISC_DATE;
-begin
-  Result.Value := Value;
-end;
-
-class operator ISC_DATE_Helper.Implicit(Value: ISC_DATE): Integer;
-begin
-  Result := Value.Value;
-end;
-
-class operator ISC_DATE_Helper.Implicit(Value: ISC_DATE): TTimeStamp;
+function ISC_DATE_Helper.ToTimeStamp: TTimeStamp;
 begin
   var y, m, d: Word;
-  decode_date(Value, y, m, d);
+  decode_date(Self, y, m, d);
   Result := DateTimeToTimeStamp(EncodeDate(y, m, d));
-end;
-
-class operator ISC_DATE_Helper.Implicit(Value: TTimeStamp): ISC_DATE;
-begin
-  var y, m, d: Word;
-  DecodeDate(TimeStampToDateTime(Value), y, m, d);
-  Result := encode_date(y, m, d);
 end;
 
 class procedure ISC_TIME_Helper.decode_time(ntime: Integer; out hours, minutes,
@@ -168,28 +155,18 @@ begin
   Result := ((hours * 60 + minutes) * 60 + seconds) * ISC_TIME_SECONDS_PRECISION + msec * 10;
 end;
 
-class operator ISC_TIME_Helper.Implicit(Value: Integer): ISC_TIME;
-begin
-  Result.Value := Value;
-end;
-
-class operator ISC_TIME_Helper.Implicit(Value: ISC_TIME): Integer;
-begin
-  Result := Value.Value;
-end;
-
-class operator ISC_TIME_Helper.Implicit(Value: ISC_TIME): TTimeStamp;
-begin
-  var hh, mm, ss, ff: Word;
-  decode_time(Value, hh, mm, ss, ff);
-  Result := DateTimeToTimeStamp(EncodeTime(hh, mm, ss, ff));
-end;
-
-class operator ISC_TIME_Helper.Implicit(Value: TTimeStamp): ISC_TIME;
+class function ISC_TIME_HELPER.Create(Value: TTimeStamp): ISC_TIME;
 begin
   var hh, mm, ss, msec: Word;
   DecodeTime(TimeStampToDateTime(Value), hh, mm, ss, msec);
   Result := encode_time(hh, mm, ss, msec);
+end;
+
+function ISC_TIME_HELPER.ToTimeStamp: TTimeStamp;
+begin
+  var hh, mm, ss, ff: Word;
+  decode_time(Self, hh, mm, ss, ff);
+  Result := DateTimeToTimeStamp(EncodeTime(hh, mm, ss, ff));
 end;
 
 class operator ISC_TIMESTAMP_Helper.Implicit(Value: ISC_TIMESTAMP): TTimeStamp;
@@ -287,15 +264,28 @@ begin
   end;
 end;
 
+class function ISC_TIMESTAMP_TZ_IANA.DefaultTimeZoneOffset(
+  aFBTimeZoneID: Word): TTimeZoneOffset;
+begin
+  Result := TTimeZoneOffset.Default;
+end;
+
 class operator ISC_TIMESTAMP_TZ_IANA.Implicit(
   Value: ISC_TIMESTAMP_TZ): ISC_TIMESTAMP_TZ_IANA;
 begin
   Result.FValue := Value;
 end;
 
+class operator ISC_TIMESTAMP_TZ_IANA.Initialize(
+  out Dest: ISC_TIMESTAMP_TZ_IANA);
+begin
+  Dest.GetTimeZoneOffset := DefaultTimeZoneOffset;
+end;
+
 procedure ISC_TIMESTAMP_TZ_IANA.Setup(aGetTimeZoneOffset: TGetTimeZoneOffSet);
 begin
-  GetTimeZoneOffset := aGetTimeZoneOffset;
+  if Assigned(aGetTimeZoneOffset) then
+    GetTimeZoneOffset := aGetTimeZoneOffset;
 end;
 
 end.

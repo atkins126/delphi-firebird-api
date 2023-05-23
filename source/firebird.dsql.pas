@@ -4,8 +4,9 @@ interface
 
 uses
   Winapi.Windows, System.Classes, System.SysUtils, Data.FMTBcd, Data.SqlTimSt,
-  firebird.charsets, firebird.client, firebird.ibase.h, firebird.iberror.h,
-  firebird.inf_pub.h, firebird.sqlda_pub.h, firebird.time.h, firebird.types_pub.h;
+  firebird.charsets.h, firebird.client, firebird.delphi, firebird.ibase.h,
+  firebird.iberror.h, firebird.inf_pub.h, firebird.sqlda_pub.h, firebird.time.h,
+  firebird.types_pub.h;
 
 type
   TXSQLVAR = class(TObject)
@@ -14,6 +15,7 @@ type
     FSQLVarReady: boolean;
     FPrepared: boolean;
     FXSQLVAR: PXSQLVAR;
+    FGetTimeZoneOffset: TGetTimeZoneOffSet;
     class var FormatSettings_US: TFormatSettings;
     class var LCID_US: TLocaleID;
     class constructor Create;
@@ -41,7 +43,7 @@ type
     procedure Set_sqltype(Value: smallint);
   public
     constructor Create(const aLibrary: IFirebirdLibrary; const aPtr: pointer;
-        aSQLVarReady: Boolean = False);
+        aSQLVarReady: Boolean; aGetTimeZoneOffset: TGetTimeZoneOffset);
     procedure BeforeDestruction; override;
     function CheckCharSet(const aExpectedCharSet: smallint): boolean;
     function CheckType(const aExpectedType: smallint): boolean;
@@ -140,6 +142,7 @@ type
     FClient: IFirebirdLibrary;
     FVars: TArray<TXSQLVAR>;
     FXSQLDA: PXSQLDA;
+    FGetTimeZoneOffset: TGetTimeZoneOffSet;
     procedure Clear;
   private
     function GetVars(Index: Integer): TXSQLVAR;
@@ -150,8 +153,8 @@ type
     function GetCount: integer;
     procedure SetCount(const aValue: integer);
   public
-    constructor Create(const aLibrary: IFirebirdLibrary; const aVarCount: Integer =
-        0);
+    constructor Create(const aLibrary: IFirebirdLibrary; const aVarCount: Integer;
+        aGetTimeZoneOffset: TGetTimeZoneOffset);
     procedure BeforeDestruction; override;
     procedure Prepare;
     property Count: integer read GetCount write SetCount;
@@ -164,8 +167,8 @@ type
 
   IFirebird_DSQL = interface(IInterface)
   ['{D78064C2-2E8F-4BA0-8EBD-739826B7FC34}']
-    function Close(const aStatusVector: IStatusVector): TFBIntType;
-    function Execute(const aStatusVector: IStatusVector): TFBIntType;
+    function Close(const aStatusVector: IStatusVector): ISC_STATUS;
+    function Execute(const aStatusVector: IStatusVector): ISC_STATUS;
     function Fetch(const aStatusVector: IStatusVector): ISC_STATUS;
     function GetIsStoredProc: Boolean;
     function Geti_SQLDA: TXSQLDA;
@@ -173,12 +176,12 @@ type
     function GetRowsAffected(const aStatusVector: IStatusVector; out aRowsAffected:
         LongWord): ISC_STATUS;
     function Open(const aStatusVector: IStatusVector; const aDBHandle:
-        pisc_db_handle; const aTransaction: TFirebirdTransaction): TFBIntType;
+        pisc_db_handle; const aTransaction: TFirebirdTransaction): ISC_STATUS;
     function GetPlan(const aStatusVector: IStatusVector): string;
     function Prepare(const aStatusVector: IStatusVector; const aSQL: string; const
-        aSQLDialect: word; const aParamCount: Integer = 0): TFBIntType; overload;
+        aSQLDialect: word; const aParamCount: Integer = 0): ISC_STATUS; overload;
     function Prepare(const aStatusVector: IStatusVector; const aSQL: string; const
-        aSQLDialect: word; const aParams: TXSQLDA): TFBIntType; overload;
+        aSQLDialect: word; const aParams: TXSQLDA): ISC_STATUS; overload;
     function Transaction: TFirebirdTransaction;
     property IsStoredProc: Boolean read GetIsStoredProc;
     property i_SQLDA: TXSQLDA read Geti_SQLDA;
@@ -201,6 +204,7 @@ type
     FEncoding: TEncoding;
     FIsStoredProc: boolean;
     FManage_SQLDA_In: boolean;
+    FGetTimeZoneOffset: TGetTimeZoneOffSet;
     function StatementHandle: pisc_stmt_handle;
   private
     FLast_DBHandle: pisc_db_handle;
@@ -209,8 +213,8 @@ type
     FLast_ParamCount: integer;
     {$Hints Off}procedure DoDebug;{$Hints On}
   protected
-    function Close(const aStatusVector: IStatusVector): TFBIntType;
-    function Execute(const aStatusVector: IStatusVector): TFBIntType;
+    function Close(const aStatusVector: IStatusVector): ISC_STATUS;
+    function Execute(const aStatusVector: IStatusVector): ISC_STATUS;
     function Fetch(const aStatusVector: IStatusVector): ISC_STATUS;
     function GetIsStoredProc: Boolean;
     function Geti_SQLDA: TXSQLDA;
@@ -219,16 +223,17 @@ type
     function GetRowsAffected(const aStatusVector: IStatusVector; out aRowsAffected:
         LongWord): ISC_STATUS;
     function Open(const aStatusVector: IStatusVector; const aDBHandle:
-        pisc_db_handle; const aTransaction: TFirebirdTransaction): TFBIntType;
+        pisc_db_handle; const aTransaction: TFirebirdTransaction): ISC_STATUS;
     function Prepare(const aStatusVector: IStatusVector; const aSQL: string; const
-        aSQLDialect: word; const aParamCount: Integer = 0): TFBIntType; overload;
+        aSQLDialect: word; const aParamCount: Integer = 0): ISC_STATUS; overload;
     function Prepare(const aStatusVector: IStatusVector; const aSQL: string; const
-        aSQLDialect: word; const aParams: TXSQLDA): TFBIntType; overload;
+        aSQLDialect: word; const aParams: TXSQLDA): ISC_STATUS; overload;
     function Transaction: TFirebirdTransaction;
   public
     constructor Create(const aClientLibrary: IFirebirdLibrary; const
-        aTransactionPool: TFirebirdTransactionPool; const aServerCharSet:
-        WideString = ''; const aIsStoredProc: Boolean = False);
+        aTransactionPool: TFirebirdTransactionPool; aGetTimeZoneOffset:
+        TGetTimeZoneOffset = nil; const aServerCharSet: WideString = ''; const
+        aIsStoredProc: Boolean = False);
     procedure BeforeDestruction; override;
   end;
 
@@ -236,12 +241,11 @@ implementation
 
 uses
   Winapi.ActiveX, System.AnsiStrings, System.DateUtils, System.Math,
-  System.StrUtils, System.Variants, System.TimeSpan,
-  Int128d, firebird.dsc.h,
-  firebird.delphi;
+  System.StrUtils, System.TimeSpan, System.Variants,
+  Int128d, firebird.dsc.h;
 
 constructor TXSQLVAR.Create(const aLibrary: IFirebirdLibrary; const aPtr:
-    pointer; aSQLVarReady: Boolean = False);
+    pointer; aSQLVarReady: Boolean; aGetTimeZoneOffset: TGetTimeZoneOffset);
 begin
   inherited Create;
   FClient := aLibrary;
@@ -249,6 +253,7 @@ begin
   FSQLVarReady := aSQLVarReady;
 
   FPrepared := False;
+  FGetTimeZoneOffset := aGetTimeZoneOffset;
 end;
 
 procedure TXSQLVAR.BeforeDestruction;
@@ -344,11 +349,11 @@ begin
   Assert(CheckType(SQL_BLOB));
 
   aIsNull := IsNull;
-  if aIsNull then Exit;
+  if aIsNull then Exit(isc_arg_end);
 
   pBlobID := sqldata;
   aIsNull := (pBlobID.gds_quad_high = 0) and (pBlobID.gds_quad_low = 0);
-  if aIsNull then Exit;
+  if aIsNull then Exit(isc_arg_end);
 
   hBlob := nil;
   FClient.isc_open_blob(aStatusVector.pValue, aDBHandle, aTransaction.TransactionHandle, @hBlob, pBlobID);
@@ -371,8 +376,7 @@ begin
       Exit
   until iLenTotal = aLength;
 
-  FClient.isc_close_blob(aStatusVector.pValue, @hBlob);
-  if aStatusVector.CheckError(FClient, Result) then Exit;
+  Result := FClient.isc_close_blob(aStatusVector.pValue, @hBlob);
 end;
 
 function TXSQLVAR.GetBlobSize(const aStatusVector: IStatusVector; const
@@ -390,28 +394,27 @@ begin
   aBlobSize := 0;
 
   aIsNull := IsNull;
-  if aIsNull then Exit;
+  if aIsNull then Exit(isc_arg_end);
 
   pBlobID := sqldata;
   aIsNull := (pBlobID.gds_quad_high = 0) and (pBlobID.gds_quad_low = 0);
-  if aIsNull then Exit;
+  if aIsNull then Exit(isc_arg_end);
 
   C[0] := isc_info_blob_total_length;
   hBlob := nil;
 
   FClient.isc_open_blob(aStatusVector.pValue, aDBHandle, aTransaction.TransactionHandle, @hBlob, pBlobID);
-  if aStatusVector.CheckError(FClient, Result) then Exit;
+  if aStatusVector.CheckError(FClient, Result) then Exit(Result);
 
   FClient.isc_blob_info(aStatusVector.pValue, @hBlob, 1, @C, Length(R), @R);
-  if aStatusVector.CheckError(FClient, Result) then Exit;
+  if aStatusVector.CheckError(FClient, Result) then Exit(Result);
 
   Assert(R[0] = C[0]);
   Move(R[1], iLen, 2);
   Assert(iLen = 4);
   Move(R[3], aBlobSize, iLen);
 
-  FClient.isc_close_blob(aStatusVector.pValue, @hBlob);
-  if aStatusVector.CheckError(FClient, Result) then Exit;
+  Result := FClient.isc_close_blob(aStatusVector.pValue, @hBlob);
 
   aIsNull := aBlobSize = 0;
 end;
@@ -438,7 +441,7 @@ begin
   if aIsNull then Exit;
 
   if CheckType(SQL_TYPE_DATE) then begin
-    var E: TTimeStamp := ISC_DATE(sqldata^);
+    var E: TTimeStamp := ISC_DATE(sqldata^).ToTimeStamp;
     Move(E.Date, aValue^, sqllen);
   end else if CheckType(SQL_TIMESTAMP) then begin
     var E: TTimeStamp := ISC_TIMESTAMP(sqldata^);
@@ -605,7 +608,7 @@ begin
   Assert(Prepared and CheckType(SQL_TYPE_TIME));
   aIsNull := IsNull;
   if not aIsNull then begin
-    var E: TTimeStamp := ISC_TIME(sqldata^);
+    var E: TTimeStamp := ISC_TIME(sqldata^).ToTimeStamp;
     Move(E.Time, aValue^, sqllen);
   end;
 end;
@@ -626,7 +629,7 @@ begin
   aIsNull := IsNull;
   if not aIsNull then begin
     var D: ISC_TIMESTAMP_TZ_IANA := ISC_TIMESTAMP_TZ(sqldata^);
-    D.Setup(FClient.GetTimeZoneOffset);
+    D.Setup(FGetTimeZoneOffset);
     var S: TSQLTimeStampOffset := D;
     Move(S, aValue^, SizeOf(S));
   end;
@@ -931,7 +934,7 @@ begin
     BlobID.gds_quad_high := 0;
     BlobID.gds_quad_low := 0;
     FClient.isc_create_blob(aStatusVector.pValue, aDBHandle, aTransaction.TransactionHandle, @hBlob, @BlobID);
-    if aStatusVector.CheckError(FClient, Result) then Exit;
+    if aStatusVector.CheckError(FClient, Result) then Exit(Result);
 
     iCurPos := 0;
     wLen := High(Word);
@@ -942,12 +945,12 @@ begin
       q := p;
       Inc(q, iCurPos);
       FClient.isc_put_segment(aStatusVector.pValue, @hBlob, wLen, PISC_SCHAR(q));
-      if aStatusVector.CheckError(FClient, Result) then Exit;
+      if aStatusVector.CheckError(FClient, Result) then Exit(Result);
       Inc(iCurPos, wLen);
     end;
 
     FClient.isc_close_blob(aStatusvector.pValue, @hBlob);
-    if aStatusVector.CheckError(FClient, Result) then Exit;
+    if aStatusVector.CheckError(FClient, Result) then Exit(Result);
 
     Move(BlobID, sqldata^, sqllen);
   end else if CheckType(SQL_TEXT) or CheckType(SQL_VARYING) then begin
@@ -988,7 +991,7 @@ begin
     Assert(False);
 
   if CheckType(SQL_TYPE_DATE) then begin
-    var D: ISC_DATE := S;
+    var D := ISC_DATE.Create(S);
     Move(D, sqldata^, sqllen);
   end else begin
     if CheckType(SQL_TIMESTAMP) then begin
@@ -1253,7 +1256,7 @@ begin
 
   S.Date := DateDelta;
   S.Time := PInteger(aValue)^;
-  D := S;
+  D := ISC_TIME.Create(S);
   Move(D, sqldata^, sqllen);
 end;
 
@@ -1574,11 +1577,12 @@ begin
 end;
 
 constructor TXSQLDA.Create(const aLibrary: IFirebirdLibrary; const aVarCount:
-    Integer = 0);
+    Integer; aGetTimeZoneOffset: TGetTimeZoneOffset);
 begin
   inherited Create;
   FClient := aLibrary;
   SetCount(aVarCount);
+  FGetTimeZoneOffset := aGetTimeZoneOffset;
 end;
 
 procedure TXSQLDA.BeforeDestruction;
@@ -1644,17 +1648,21 @@ begin
   for i := 0 to aValue - 1 do begin
     p := @FXSQLDA.sqlvar;
     Inc(p, i * SizeOf(XSQLVAR));
-    FVars[i] := TXSQLVAR.Create(FClient, p, False);
+    FVars[i] := TXSQLVAR.Create(FClient, p, False, FGetTimeZoneOffset);
   end;
 end;
 
 constructor TFirebird_DSQL.Create(const aClientLibrary: IFirebirdLibrary; const
-    aTransactionPool: TFirebirdTransactionPool; const aServerCharSet:
-    WideString = ''; const aIsStoredProc: Boolean = False);
+    aTransactionPool: TFirebirdTransactionPool; aGetTimeZoneOffset:
+    TGetTimeZoneOffset = nil; const aServerCharSet: WideString = ''; const
+    aIsStoredProc: Boolean = False);
 begin
   inherited Create;
   FClient := aClientLibrary;
   FTransactionPool := aTransactionPool;
+
+  FGetTimeZoneOffset := aGetTimeZoneOffset;
+
   if SameText(aServerCharSet, 'UTF8') then
     FEncoding := TEncoding.UTF8
   else
@@ -1688,7 +1696,7 @@ begin
   if FManage_SQLDA_In and Assigned(FSQLDA_In) then FSQLDA_In.Free;
 end;
 
-function TFirebird_DSQL.Execute(const aStatusVector: IStatusVector): TFBIntType;
+function TFirebird_DSQL.Execute(const aStatusVector: IStatusVector): ISC_STATUS;
 var X: PXSQLDA;
     bHasOutput: boolean;
 begin
@@ -1717,14 +1725,12 @@ begin
 
   if Result = isc_no_cur_rec then begin
     FState := S_EOF;
-    aStatusVector.pValue[1] := 0;
-    Result := 0;
-    Exit;
-  end else if aStatusVector.CheckError(FClient, Result) then
-    Exit;
-
-  FState := S_EXECUTED;
-  FFetchCount := 0;
+    aStatusVector.SetError;
+    Result := isc_arg_end;
+  end else if not aStatusVector.CheckError(FClient, Result) then begin
+    FState := S_EXECUTED;
+    FFetchCount := 0;
+  end;
 end;
 
 function TFirebird_DSQL.Fetch(const aStatusVector: IStatusVector): ISC_STATUS;
@@ -1815,9 +1821,9 @@ begin
   Result := FTransaction;
 end;
 
-function TFirebird_DSQL.Close(const aStatusVector: IStatusVector): TFBIntType;
+function TFirebird_DSQL.Close(const aStatusVector: IStatusVector): ISC_STATUS;
 begin
-  if FState = S_INACTIVE then Exit(0);
+  if FState = S_INACTIVE then Exit(isc_arg_end);
   try
     if FManageTransaction then begin
       if (FState = S_EXECUTED) or (FState = S_EOF) then begin
@@ -1832,7 +1838,7 @@ begin
     end;
 
     FClient.isc_dsql_free_statement(aStatusVector.pValue, StatementHandle, DSQL_drop);
-    if aStatusVector.CheckError(FClient, Result) then Exit;
+    aStatusVector.CheckError(FClient, Result);
   finally
     FState := S_INACTIVE;
   end;
@@ -1845,7 +1851,7 @@ end;
 
 function TFirebird_DSQL.Open(const aStatusVector: IStatusVector; const
     aDBHandle: pisc_db_handle; const aTransaction: TFirebirdTransaction):
-    TFBIntType;
+    ISC_STATUS;
 begin
   Assert(FState = S_INACTIVE);
 
@@ -1864,23 +1870,23 @@ begin
     FTransaction := FTransactionPool.Add;
     FTransaction.Start(aStatusVector);
   end;
-  if aStatusVector.CheckError(FClient, Result) then Exit;
-  FState := S_OPENED;
+  if not aStatusVector.CheckError(FClient, Result) then
+    FState := S_OPENED;
 end;
 
 function TFirebird_DSQL.Prepare(const aStatusVector: IStatusVector; const aSQL:
     string; const aSQLDialect: word; const aParamCount: Integer = 0):
-    TFBIntType;
+    ISC_STATUS;
 begin
   if (aParamCount > 0) and (FSQLDA_In = nil) then begin
     FManage_SQLDA_In := True;
-    FSQLDA_In := TXSQLDA.Create(FClient, aParamCount);
+    FSQLDA_In := TXSQLDA.Create(FClient, aParamCount, FGetTimeZoneOffset);
   end;
   Result := Prepare(aStatusVector, aSQL, aSQLDialect, FSQLDA_In);
 end;
 
 function TFirebird_DSQL.Prepare(const aStatusVector: IStatusVector; const aSQL:
-    string; const aSQLDialect: word; const aParams: TXSQLDA): TFBIntType;
+    string; const aSQLDialect: word; const aParams: TXSQLDA): ISC_STATUS;
 {$ifdef Unicode}var B: TBytes;{$endif}
 begin
   Assert(FState = S_OPENED);
@@ -1894,7 +1900,7 @@ begin
 
   {$region 'prepare'}
   FreeAndNil(FSQLDA_Out);
-  FSQLDA_Out := TXSQLDA.Create(FClient);
+  FSQLDA_Out := TXSQLDA.Create(FClient, 0, FGetTimeZoneOffset);
 
   {$ifdef Unicode}
   B := FEncoding.GetBytes(aSQL);
